@@ -18,6 +18,7 @@ AttentionKernel::AttentionKernel(AttentionKernelDescriptor descriptor, MTL::Devi
   blockDimensions = descriptor.blockDimensions;
   headDimension = descriptor.headDimension;
   leadingDimensions = descriptor.leadingDimensions;
+  isCausal = descriptor.isCausal;
   disableAsyncCopy = false;
 
   threadgroupSize = 32 * (blockDimensions[0] / 8);
@@ -683,6 +684,7 @@ std::string AttentionKernel::loopForward() const noexcept {
   source.SetValue("BLOCK_DIMENSIONS_TRAVERSAL", std::to_string(blockDimensions[1]));
   source.SetValue("QKT", QKT);
   source.SetValue("MASK_ATTENTION_MATRIX_EDGE", maskAttentionMatrixEdge());
+  source.SetValue("MASK_ATTENTION_MATRIX_CAUSAL", isCausal ? maskAttentionMatrixCausal() : "");
   source.SetValue("ONLINE_REDUCE_MAXIMUM", onlineReduceMaximum());
   source.SetValue("ONLINE_CORRECT_O", onlineCorrectO());
   source.SetValue("SOFTMAX", softmax(false));
@@ -695,6 +697,7 @@ std::string AttentionKernel::loopForward() const noexcept {
     // S = Q * K^T
     {{QKT}}
     {{MASK_ATTENTION_MATRIX_EDGE}}
+    {{MASK_ATTENTION_MATRIX_CAUSAL}}
 
     // m = reduce(m)
     {{ONLINE_REDUCE_MAXIMUM}}
@@ -733,6 +736,7 @@ std::string AttentionKernel::loopBackwardQuery() const noexcept {
   CodeWriter source;
   source.SetValue("BLOCK_DIMENSIONS_TRAVERSAL", std::to_string(blockDimensions[1]));
   source.SetValue("QKT", QKT);
+  source.SetValue("MASK_ATTENTION_MATRIX_CAUSAL", isCausal ? maskAttentionMatrixCausal() : "");
   source.SetValue("SOFTMAX", softmax(false));
   source.SetValue("DOVT", dOVT);
   source.SetValue("D_SOFTMAX", softmax(true));
@@ -743,6 +747,7 @@ std::string AttentionKernel::loopBackwardQuery() const noexcept {
   for (uint c = 0; c < C; c += {{BLOCK_DIMENSIONS_TRAVERSAL}}) {
     // S = Q * K^T
     {{QKT}}
+    {{MASK_ATTENTION_MATRIX_CAUSAL}}
 
     // P = softmax(S * scaleFactor)
     {{SOFTMAX}}
@@ -782,6 +787,7 @@ std::string AttentionKernel::loopBackwardKeyValue() const noexcept {
   CodeWriter source;
   source.SetValue("BLOCK_DIMENSIONS_TRAVERSAL", std::to_string(blockDimensions[1]));
   source.SetValue("KQT", KQT);
+  source.SetValue("MASK_ATTENTION_MATRIX_CAUSAL", isCausal ? maskAttentionMatrixCausal() : "");
   source.SetValue("SOFTMAX", softmax(false));
   source.SetValue("PTDO", PTdO);
   source.SetValue("VDOT", VdOT);
@@ -793,6 +799,7 @@ std::string AttentionKernel::loopBackwardKeyValue() const noexcept {
   for (uint r = 0; r < R; r += {{BLOCK_DIMENSIONS_TRAVERSAL}}) {
     // S^T = K * Q^T
     {{KQT}}
+    {{MASK_ATTENTION_MATRIX_CAUSAL}}
 
     // P^T = exp(S^T - L)
     {{SOFTMAX}}
@@ -2937,6 +2944,79 @@ std::string AttentionKernel::maskAttentionMatrixEdge() const noexcept {
     for (ushort c = {{REMAINDER_FLOOR}} + 8; c < {{BLOCK_DIM}}; c += 8) {
       auto S_elements = S_sram[c / 8].thread_elements();
       *S_elements = mask_value;
+    }
+  }
+
+)";
+  return source.ToString();
+}
+
+std::string AttentionKernel::maskAttentionMatrixCausal() const noexcept {
+  auto blockDim = blockDimensions[1];
+  float logBase2E = 1.442695041;
+
+  CodeWriter source;
+  source.SetValue("BLOCK_DIM", std::to_string(blockDim));
+  source.SetValue("LOG_BASE_2E", std::to_string(logBase2E));
+  source.SetValue("REGISTER_NAME_S", registerName(AttentionOperand::S));
+  source.SetValue("PARALLELIZATION_GROUP_OFFSET", parallelizationGroupOffsetValue());
+  source.SetValue("TRAVERSAL_OFFSET", traversalOffsetValue());
+
+  // For forward/backwardQuery: parallelization=R (rows), traversal=C (cols).
+  //   global_row = parallelization_group_offset + sidx * 8 + morton_offset.y
+  //   global_col = c (outer loop) + c_local (inner loop) + morton_offset.x
+  //   Mask when global_row < global_col (future tokens in upper triangle)
+  //
+  // For backwardKeyValue: parallelization=C (K-pos), traversal=R (Q-pos).
+  //   S^T is computed, so:
+  //   k_pos = parallelization_group_offset + sidx * 8 + morton_offset.y
+  //   q_pos = r (outer loop) + c_local (inner loop) + morton_offset.x
+  //   Mask when q_pos < k_pos (same causal condition from Q's perspective)
+
+  source += R"(
+
+  {
+    const {{REGISTER_NAME_S}} mask_value =
+    (0.875 / {{LOG_BASE_2E}}) * -numeric_limits<{{REGISTER_NAME_S}}>::max();
+
+    uint row = {{PARALLELIZATION_GROUP_OFFSET}} + sidx * 8 + morton_offset.y;
+
+    #pragma clang loop unroll(full)
+    for (ushort c_local = 0; c_local < {{BLOCK_DIM}}; c_local += 8) {
+      uint col = {{TRAVERSAL_OFFSET}} + c_local + morton_offset.x;
+      auto S_elements = S_sram[c_local / 8].thread_elements();
+
+)";
+
+  switch (type.value) {
+  case AttentionKernelType::forward:
+  case AttentionKernelType::backwardQuery:
+    // Mask upper triangle: row < col means future token
+    source += R"(
+      // Forward/BWD-Q: mask when row < col (upper triangle)
+      #pragma clang loop unroll(full)
+      for (ushort index = 0; index < 2; ++index) {
+        if (row < ({{TRAVERSAL_OFFSET}} + c_local + morton_offset.x + index)) {
+          (*S_elements)[index] = mask_value;
+        }
+      }
+)";
+    break;
+  case AttentionKernelType::backwardKeyValue:
+    // S^T computed: row=k_pos, col=q_pos. Mask when q_pos < k_pos
+    source += R"(
+      // BWD-KV (S^T): mask when col (q_pos) < row (k_pos)
+      #pragma clang loop unroll(full)
+      for (ushort index = 0; index < 2; ++index) {
+        if (({{TRAVERSAL_OFFSET}} + c_local + morton_offset.x + index) < row) {
+          (*S_elements)[index] = mask_value;
+        }
+      }
+)";
+    break;
+  }
+
+  source += R"(
     }
   }
 

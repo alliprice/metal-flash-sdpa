@@ -7,3 +7,8 @@ build/
 dist/
 *.egg
 .eggs/
+.local/
+cache/
+upstream/
+debug.log
+CLAUDE.md

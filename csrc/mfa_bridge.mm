@@ -65,7 +65,7 @@ static void validate_attention_inputs(
 
 static ccv_nnc_mfa_attention_params_t make_attention_params(
     int64_t B, int64_t R, int64_t C, int64_t Hq, int64_t Hk, int64_t D,
-    float scale, uint8_t type, at::ScalarType dtype) {
+    float scale, uint8_t type, at::ScalarType dtype, bool is_causal) {
   ccv_nnc_mfa_attention_params_t params = {};
   params.type = type;
   params.R = (uint32_t)R;
@@ -82,6 +82,7 @@ static ccv_nnc_mfa_attention_params_t make_attention_params(
   params.masked = 0;
   params.upcast = 1;
   params.use_neural_accelerators = 0;
+  params.is_causal = is_causal ? 1 : 0;
   params.data_type = torchDtypeToMTL(dtype);
   memset(params.batch_dims_q, 0, sizeof(params.batch_dims_q));
   memset(params.batch_dims_mask, 0, sizeof(params.batch_dims_mask));
@@ -98,7 +99,8 @@ std::vector<torch::Tensor> mfa_attention_forward(
     const torch::Tensor& Q,   // [B, R, Hq, D]
     const torch::Tensor& K,   // [B, C, Hk, D]
     const torch::Tensor& V,   // [B, C, Hk, D]
-    double scale
+    double scale,
+    bool is_causal
 ) {
   validate_attention_inputs(Q, K, V);
 
@@ -120,7 +122,7 @@ std::vector<torch::Tensor> mfa_attention_forward(
   auto LSE = torch::empty({B * Hq * R},
       torch::TensorOptions().device(Q.device()).dtype(torch::kFloat32));
 
-  auto params = make_attention_params(B, R, C, Hq, Hk, D, (float)scale, 0, Q.scalar_type());
+  auto params = make_attention_params(B, R, C, Hq, Hk, D, (float)scale, 0, Q.scalar_type(), is_causal);
 
   auto* ctx = get_mfa_context();
   ccv_nnc_mfa_prepare_attention(ctx, params);
@@ -174,7 +176,8 @@ std::vector<torch::Tensor> mfa_attention_backward(
     const torch::Tensor& O,    // [B, R, Hq, D]
     const torch::Tensor& LSE,  // [B*Hq*R] float32
     const torch::Tensor& dO,   // [B, R, Hq, D]
-    double scale
+    double scale,
+    bool is_causal
 ) {
   validate_attention_inputs(Q, K, V);
   TORCH_CHECK(O.device().is_mps() && O.is_contiguous(), "O must be contiguous MPS tensor");
@@ -198,7 +201,7 @@ std::vector<torch::Tensor> mfa_attention_backward(
   auto dK = torch::empty({B, C, Hq, D}, K.options());                   // [B, C, Hq, D]
   auto dV = torch::empty({B, C, Hq, D}, V.options());                   // [B, C, Hq, D]
 
-  auto params = make_attention_params(B, R, C, Hq, Hk, D, (float)scale, 1, Q.scalar_type());
+  auto params = make_attention_params(B, R, C, Hq, Hk, D, (float)scale, 1, Q.scalar_type(), is_causal);
 
   auto* ctx = get_mfa_context();
   ccv_nnc_mfa_prepare_attention(ctx, params);
@@ -254,9 +257,11 @@ std::vector<torch::Tensor> mfa_attention_backward(
 PYBIND11_MODULE(_C, m) {
   m.def("mfa_attention_forward", &mfa_attention_forward,
         "Metal Flash Attention forward pass",
-        py::arg("Q"), py::arg("K"), py::arg("V"), py::arg("scale"));
+        py::arg("Q"), py::arg("K"), py::arg("V"), py::arg("scale"),
+        py::arg("is_causal") = false);
   m.def("mfa_attention_backward", &mfa_attention_backward,
         "Metal Flash Attention backward pass",
         py::arg("Q"), py::arg("K"), py::arg("V"), py::arg("O"),
-        py::arg("LSE"), py::arg("dO"), py::arg("scale"));
+        py::arg("LSE"), py::arg("dO"), py::arg("scale"),
+        py::arg("is_causal") = false);
 }

@@ -17,7 +17,8 @@ bool AttentionDescriptor::operator==(const AttentionDescriptor& rhs) const {
   simd_all(leadingDimensions.value_or(simd::uint4(UINT32_MAX)) == rhs.leadingDimensions.value_or(simd::uint4(UINT32_MAX))) &&
   batchStrides == rhs.batchStrides &&
   simd_all(matrixDimensions == rhs.matrixDimensions) &&
-  simd_all(transposeState == rhs.transposeState);
+  simd_all(transposeState == rhs.transposeState) &&
+  isCausal == rhs.isCausal;
 }
 
 std::size_t std::hash<AttentionDescriptor>::operator()(const AttentionDescriptor& hash) const noexcept {
@@ -36,7 +37,7 @@ std::size_t std::hash<AttentionDescriptor>::operator()(const AttentionDescriptor
     combine_32(seed, hash.leadingDimensions.value()[3]);
   }
   combine_32(seed, pack_32(simd::uchar4 { hash.transposeState[0], hash.transposeState[1], hash.transposeState[2], hash.transposeState[3] }));
-  combine_32(seed, pack_32(simd::uchar4 { hash.lowPrecisionInputs, hash.isBF16, hash.lowPrecisionIntermediates, 0 }));
+  combine_32(seed, pack_32(simd::uchar4 { hash.lowPrecisionInputs, hash.isBF16, hash.lowPrecisionIntermediates, hash.isCausal }));
   combine_32(seed, pack_32(simd::ushort2 { hash.type.value, 0 } ));
   return seed;
 }
@@ -121,9 +122,9 @@ AttentionKernelDescriptor AttentionDescriptor::kernelDescriptor(MTL::Device *con
   };
 
   if (device->supportsFamily(MTL::GPUFamily(1009))) {
-    return AttentionKernelDescriptor(createBlockDimensions(), createCacheState(), createHeadDimension(), createMemoryPrecisions(), true, false, createRegisterPrecisions(device), createTransposeState(), createLeadingDimensions(), type);
+    return AttentionKernelDescriptor(createBlockDimensions(), createCacheState(), createHeadDimension(), createMemoryPrecisions(), true, false, createRegisterPrecisions(device), createTransposeState(), createLeadingDimensions(), type, isCausal);
   } else {
-    return AttentionKernelDescriptor(createBlockDimensions(), createCacheState(), createHeadDimension(), createMemoryPrecisions(), false, true, createRegisterPrecisions(device), createTransposeState(), createLeadingDimensions(), type);
+    return AttentionKernelDescriptor(createBlockDimensions(), createCacheState(), createHeadDimension(), createMemoryPrecisions(), false, true, createRegisterPrecisions(device), createTransposeState(), createLeadingDimensions(), type, isCausal);
   }
 }
 

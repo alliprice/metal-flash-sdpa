@@ -14,16 +14,17 @@ _dispatch_count = 0
 
 class MetalFlashAttentionForward(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, query, key, value, scale):
+    def forward(ctx, query, key, value, scale, is_causal):
         # PyTorch SDPA format: [B, Hq, R, D] -> MFA format: [B, R, Hq, D]
         q = query.transpose(1, 2).contiguous()
         k = key.transpose(1, 2).contiguous()
         v = value.transpose(1, 2).contiguous()
 
-        o, lse = mfa_attention_forward(q, k, v, scale)
+        o, lse = mfa_attention_forward(q, k, v, scale, is_causal)
 
         ctx.save_for_backward(q, k, v, o, lse)
         ctx.scale = scale
+        ctx.is_causal = is_causal
 
         # MFA format: [B, R, Hq, D] -> PyTorch SDPA format: [B, Hq, R, D]
         return o.transpose(1, 2)
@@ -35,11 +36,11 @@ class MetalFlashAttentionForward(torch.autograd.Function):
         # PyTorch SDPA format: [B, Hq, R, D] -> MFA format: [B, R, Hq, D]
         d_o = grad_output.transpose(1, 2).contiguous()
 
-        dq, dk, dv = mfa_attention_backward(q, k, v, o, lse, d_o, ctx.scale)
+        dq, dk, dv = mfa_attention_backward(q, k, v, o, lse, d_o, ctx.scale, ctx.is_causal)
 
         # MFA format: [B, R, Hq, D] -> PyTorch SDPA format: [B, Hq, R, D]
         # dK/dV are [B, C, Hq, D] from MFA — transpose to [B, Hq, C, D]
-        return dq.transpose(1, 2), dk.transpose(1, 2), dv.transpose(1, 2), None
+        return dq.transpose(1, 2), dk.transpose(1, 2), dv.transpose(1, 2), None, None
 
 
 _debug_log = False
@@ -77,12 +78,11 @@ def patched_sdpa(query, key, value, attn_mask=None, dropout_p=0.0,
     if (query.device.type == 'mps'
         and dropout_p == 0.0
         and _is_trivial_mask(attn_mask)
-        and not is_causal
         and query.size(-2) >= MIN_SEQ_LEN
         and query.dtype in (torch.float16, torch.bfloat16, torch.float32)):
         _dispatch_count += 1
         s = scale if scale is not None else query.size(-1) ** -0.5
-        return MetalFlashAttentionForward.apply(query, key, value, s)
+        return MetalFlashAttentionForward.apply(query, key, value, s, is_causal)
     _fallback_count += 1
     if _debug_log and _fallback_count <= 50:
         reasons = []
@@ -92,8 +92,6 @@ def patched_sdpa(query, key, value, attn_mask=None, dropout_p=0.0,
             reasons.append(f"dropout={dropout_p}")
         if attn_mask is not None and not _is_trivial_mask(attn_mask):
             reasons.append(f"attn_mask={attn_mask.shape} (has False values)")
-        if is_causal:
-            reasons.append("is_causal=True")
         if query.size(-2) < MIN_SEQ_LEN:
             reasons.append(f"seq_len={query.size(-2)}<{MIN_SEQ_LEN}")
         if query.dtype not in (torch.float16, torch.bfloat16, torch.float32):

@@ -11,6 +11,7 @@ typedef struct {
   uint8_t upcast;
   uint8_t type;
   uint8_t use_neural_accelerators;
+  uint8_t is_causal;
   uint32_t R;
   uint32_t C;
   uint32_t Hq;
@@ -45,6 +46,7 @@ public:
   uint8_t masked;
   uint8_t upcast;
   uint8_t type;
+  uint8_t is_causal;
   uint32_t R;
   uint32_t C;
   uint32_t Hq;
@@ -52,7 +54,7 @@ public:
   uint32_t D;
   float alpha;
   uint64_t data_type;
-  
+
   hash(ccv_nnc_mfa_attention_params_t);
   
   bool operator==(const hash& rhs) const;

@@ -145,6 +145,7 @@ void ccv_nnc_mfa_encode_attention(mfa::context* context, ccv_nnc_mfa_attention_p
     attentionDesc.Hk = hash.Hk;
     attentionDesc.batchDimension = batch_sizes[0];
     attentionDesc.scale = hash.alpha;
+    attentionDesc.isCausal = (hash.is_causal != 0);
     if (params.batched) {
       attentionDesc.batchStrides[AttentionOperand::Q] = hash.R * hash.D * hash.Hq;
       attentionDesc.batchStrides[AttentionOperand::K] = hash.C * hash.D * hash.Hk;
@@ -551,6 +552,7 @@ mfa::attention::hash::hash(ccv_nnc_mfa_attention_params_t params) {
   masked = params.masked;
   upcast = params.upcast;
   type = params.type;
+  is_causal = params.is_causal;
 }
 
 bool mfa::attention::hash::operator==(const mfa::attention::hash& hash) const {
@@ -569,7 +571,8 @@ bool mfa::attention::hash::operator==(const mfa::attention::hash& hash) const {
   (batched == hash.batched) &&
   (masked == hash.masked) &&
   (upcast == hash.upcast) &&
-  (type == hash.type);
+  (type == hash.type) &&
+  (is_causal == hash.is_causal);
 }
 
 std::ostream& operator<<(std::ostream& os, const mfa::attention::hash& hash) {
@@ -587,8 +590,9 @@ std::ostream& operator<<(std::ostream& os, const mfa::attention::hash& hash) {
   os << " .alpha = " << double(hash.alpha) << ',';
   os << " .batched = " << bool(hash.batched) << ',';
   os << " .masked = " << bool(hash.masked) << ", ";
-  os << " .upcast = " << bool(hash.upcast) << " ";
-  os << " .type = " << hash.type << " ";
+  os << " .upcast = " << bool(hash.upcast) << ",";
+  os << " .type = " << hash.type << ",";
+  os << " .is_causal = " << bool(hash.is_causal) << " ";
   os << "}";
   return os;
 }
@@ -601,6 +605,7 @@ std::size_t std::hash<mfa::attention::hash>::operator()(const mfa::attention::ha
   combine_64(seed, pack_64(simd::uint2 { hash.Hq, hash.Hk }));
   combine_64(seed, pack_64(simd::uint2 { hash.D, pack_32(simd::uchar4 { hash.Q_trans, hash.K_trans, hash.V_trans, hash.O_trans })}));
   combine_64(seed, pack_64(simd::uint2 { *reinterpret_cast<const uint32_t*>(&hash.alpha), pack_32(simd::uchar4 { hash.batched, hash.masked, hash.upcast, hash.type })}));
+  combine_32(seed, hash.is_causal);
   return seed;
 }
 

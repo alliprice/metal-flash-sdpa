@@ -197,6 +197,159 @@ def test_min_seq_len_threshold():
     print(f"  [PASS] MIN_SEQ_LEN threshold (threshold={metal_flash_sdpa.MIN_SEQ_LEN})")
 
 
+def reference_causal_sdpa(Q, K, V, scale):
+    """Eager causal attention on CPU as reference."""
+    # Q: [B, H, R, D], K: [B, H, C, D], V: [B, H, C, D]
+    attn = torch.matmul(Q, K.transpose(-2, -1)) * scale
+    R, C = attn.shape[-2], attn.shape[-1]
+    # Create causal mask: upper triangle (future tokens) = -inf
+    causal_mask = torch.triu(torch.ones(R, C, dtype=torch.bool), diagonal=1)
+    attn = attn.masked_fill(causal_mask, float('-inf'))
+    attn = torch.softmax(attn, dim=-1)
+    return torch.matmul(attn, V)
+
+
+def test_causal_forward(B, H, R, D, dtype):
+    """Test causal forward: MFA output vs CPU causal reference."""
+    import metal_flash_sdpa
+
+    Q = torch.randn(B, H, R, D, device='mps', dtype=dtype)
+    K = torch.randn(B, H, R, D, device='mps', dtype=dtype)
+    V = torch.randn(B, H, R, D, device='mps', dtype=dtype)
+
+    scale = D ** -0.5
+
+    # MFA causal path
+    metal_flash_sdpa.enable()
+    with torch.no_grad():
+        out_mfa = torch.nn.functional.scaled_dot_product_attention(
+            Q, K, V, scale=scale, is_causal=True)
+    metal_flash_sdpa.disable()
+
+    # Reference: eager causal on CPU in float32
+    out_ref = reference_causal_sdpa(
+        Q.cpu().float(), K.cpu().float(), V.cpu().float(), scale
+    ).to(dtype).to('mps')
+
+    max_diff = (out_mfa - out_ref).abs().max().item()
+    mean_diff = (out_mfa - out_ref).abs().mean().item()
+
+    if dtype == torch.float32:
+        tol = 1e-3
+    else:
+        tol = 0.05
+
+    status = "PASS" if max_diff < tol else "FAIL"
+    print(f"  [{status}] Causal fwd B={B} H={H} R={R} D={D} {dtype}: "
+          f"max_diff={max_diff:.6f} mean_diff={mean_diff:.6f}")
+    assert max_diff < tol, f"Causal forward mismatch! max_diff={max_diff} > tol={tol}"
+    return max_diff
+
+
+def test_causal_backward(B, H, R, D, dtype):
+    """Test causal backward: dQ/dK/dV vs CPU causal reference."""
+    import metal_flash_sdpa
+
+    scale = D ** -0.5
+
+    # CPU reference
+    Q_cpu = torch.randn(B, H, R, D, dtype=torch.float32, requires_grad=True)
+    K_cpu = torch.randn(B, H, R, D, dtype=torch.float32, requires_grad=True)
+    V_cpu = torch.randn(B, H, R, D, dtype=torch.float32, requires_grad=True)
+
+    out_ref = reference_causal_sdpa(Q_cpu, K_cpu, V_cpu, scale)
+    grad_out_cpu = torch.randn_like(out_ref)
+    out_ref.backward(grad_out_cpu)
+    dQ_ref = Q_cpu.grad.clone()
+    dK_ref = K_cpu.grad.clone()
+    dV_ref = V_cpu.grad.clone()
+
+    # MFA causal on MPS
+    Q_mps = Q_cpu.detach().to(device='mps', dtype=dtype).requires_grad_(True)
+    K_mps = K_cpu.detach().to(device='mps', dtype=dtype).requires_grad_(True)
+    V_mps = V_cpu.detach().to(device='mps', dtype=dtype).requires_grad_(True)
+    grad_out_mps = grad_out_cpu.to(device='mps', dtype=dtype)
+
+    metal_flash_sdpa.enable()
+    out_mfa = torch.nn.functional.scaled_dot_product_attention(
+        Q_mps, K_mps, V_mps, scale=scale, is_causal=True)
+    out_mfa.backward(grad_out_mps)
+    metal_flash_sdpa.disable()
+
+    dQ_mfa = Q_mps.grad.cpu().float()
+    dK_mfa = K_mps.grad.cpu().float()
+    dV_mfa = V_mps.grad.cpu().float()
+
+    dQ_diff = (dQ_mfa - dQ_ref).abs().max().item()
+    dK_diff = (dK_mfa - dK_ref).abs().max().item()
+    dV_diff = (dV_mfa - dV_ref).abs().max().item()
+
+    if dtype == torch.float32:
+        tol = 1e-3
+    else:
+        tol = 0.1
+
+    status = "PASS" if max(dQ_diff, dK_diff, dV_diff) < tol else "FAIL"
+    print(f"  [{status}] Causal bwd B={B} H={H} R={R} D={D} {dtype}: "
+          f"dQ_max={dQ_diff:.6f} dK_max={dK_diff:.6f} dV_max={dV_diff:.6f}")
+    assert dQ_diff < tol, f"Causal dQ mismatch! max_diff={dQ_diff} > tol={tol}"
+    assert dK_diff < tol, f"Causal dK mismatch! max_diff={dK_diff} > tol={tol}"
+    assert dV_diff < tol, f"Causal dV mismatch! max_diff={dV_diff} > tol={tol}"
+
+
+def test_causal_training_loop():
+    """Training loop with is_causal=True: loss should decrease."""
+    import metal_flash_sdpa
+
+    B, H, R, D = 1, 4, 64, 64
+    target = torch.randn(B, H, R, D, device='mps', dtype=torch.float32)
+
+    proj_in = torch.randn(D, D, device='mps', dtype=torch.float32, requires_grad=True)
+    proj_out = torch.randn(D, D, device='mps', dtype=torch.float32, requires_grad=True)
+
+    metal_flash_sdpa.enable()
+    losses = []
+    lr = 0.001
+    for step in range(10):
+        x = torch.randn(B, H, R, D, device='mps', dtype=torch.float32)
+        q = x @ proj_in
+        k = x @ proj_in
+        v = x @ proj_in
+        out = torch.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=True)
+        out = out @ proj_out
+        loss = ((out - target) ** 2).mean()
+        loss.backward()
+        losses.append(loss.item())
+        with torch.no_grad():
+            proj_in -= lr * proj_in.grad
+            proj_out -= lr * proj_out.grad
+            proj_in.grad.zero_()
+            proj_out.grad.zero_()
+    metal_flash_sdpa.disable()
+
+    print(f"  Causal training losses: {[f'{l:.4f}' for l in losses]}")
+    status = "PASS" if losses[-1] < losses[0] else "WARN"
+    print(f"  [{status}] Causal training loop: loss {losses[0]:.4f} -> {losses[-1]:.4f}")
+
+
+def test_causal_dispatch_counter():
+    """Verify is_causal=True dispatches to MFA (not falling back)."""
+    import metal_flash_sdpa
+
+    metal_flash_sdpa.reset_dispatch_count()
+    metal_flash_sdpa.enable()
+    Q = torch.randn(1, 4, 512, 64, device='mps', dtype=torch.float16)
+    K = torch.randn(1, 4, 512, 64, device='mps', dtype=torch.float16)
+    V = torch.randn(1, 4, 512, 64, device='mps', dtype=torch.float16)
+    with torch.no_grad():
+        for _ in range(3):
+            torch.nn.functional.scaled_dot_product_attention(Q, K, V, is_causal=True)
+    count = metal_flash_sdpa.get_dispatch_count()
+    metal_flash_sdpa.disable()
+    assert count == 3, f"Expected 3 causal dispatches, got {count}"
+    print(f"  [PASS] Causal dispatch counter: {count} dispatches (expected 3)")
+
+
 def test_timing(B, H, R, C, D, dtype, n_iters=100):
     """Basic timing comparison."""
     import metal_flash_sdpa
@@ -356,6 +509,22 @@ if __name__ == '__main__':
     assert count == 0, f"Expected 0 dispatches with non-trivial mask, got {count}"
     metal_flash_sdpa.disable()
     print("  [PASS] Trivial mask: all-True dispatches to MFA, non-trivial falls back")
+
+    print("\nCausal forward correctness tests:")
+    test_causal_forward(1, 4, 256, 64, torch.float32)
+    test_causal_forward(2, 8, 512, 128, torch.float16)
+    test_causal_forward(1, 4, 256, 64, torch.float16)
+    test_causal_forward(2, 8, 512, 64, torch.bfloat16)
+
+    print("\nCausal backward correctness tests:")
+    test_causal_backward(1, 4, 256, 64, torch.float32)
+    test_causal_backward(2, 8, 256, 64, torch.float16)
+
+    print("\nCausal training loop test:")
+    test_causal_training_loop()
+
+    print("\nCausal dispatch counter test:")
+    test_causal_dispatch_counter()
 
     print("\nForward timing:")
     test_timing(2, 8, 128, 128, 64, torch.float16)

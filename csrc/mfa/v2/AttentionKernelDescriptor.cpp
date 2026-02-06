@@ -15,7 +15,8 @@ bool AttentionKernelDescriptor::operator==(const AttentionKernelDescriptor& rhs)
   registerPrecisions == rhs.registerPrecisions &&
   transposeState == rhs.transposeState &&
   leadingDimensions == rhs.leadingDimensions &&
-  type == rhs.type;
+  type == rhs.type &&
+  isCausal == rhs.isCausal;
 }
 
 std::size_t std::hash<AttentionKernelDescriptor>::operator()(const AttentionKernelDescriptor& hash) const noexcept {
@@ -23,13 +24,13 @@ std::size_t std::hash<AttentionKernelDescriptor>::operator()(const AttentionKern
   using namespace ccv::nnc::mfa::hash;
   combine_64(seed, pack_64(simd_make_ushort4(hash.blockDimensions, 0)));
   combine_32(seed, pack_32(simd::ushort2 { hash.headDimension, hash.type.value }));
-  combine_32(seed, pack_32(simd::uchar4 { hash.preferAsyncCache, hash.preferAsyncLoad, 0, 0 }));
+  combine_32(seed, pack_32(simd::uchar4 { hash.preferAsyncCache, hash.preferAsyncLoad, hash.isCausal, 0 }));
   return seed;
 }
 
 // MARK: - Initializer
 
-AttentionKernelDescriptor::AttentionKernelDescriptor(simd::ushort3 blockDimensions, AttentionOperands<bool> cacheState, unsigned short headDimension, AttentionOperands<GEMMOperandPrecision> memoryPrecisions, bool preferAsyncCache, bool preferAsyncLoad, AttentionOperands<GEMMOperandPrecision> registerPrecisions, AttentionOperands<bool> transposeState, AttentionOperands<bool> leadingDimensions, AttentionKernelType type) noexcept {
+AttentionKernelDescriptor::AttentionKernelDescriptor(simd::ushort3 blockDimensions, AttentionOperands<bool> cacheState, unsigned short headDimension, AttentionOperands<GEMMOperandPrecision> memoryPrecisions, bool preferAsyncCache, bool preferAsyncLoad, AttentionOperands<GEMMOperandPrecision> registerPrecisions, AttentionOperands<bool> transposeState, AttentionOperands<bool> leadingDimensions, AttentionKernelType type, bool isCausal) noexcept {
   this->blockDimensions = blockDimensions;
   this->cacheState = cacheState;
   this->headDimension = headDimension;
@@ -40,4 +41,5 @@ AttentionKernelDescriptor::AttentionKernelDescriptor(simd::ushort3 blockDimensio
   this->transposeState = transposeState;
   this->leadingDimensions = leadingDimensions;
   this->type = type;
+  this->isCausal = isCausal;
 }

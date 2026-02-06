@@ -37,6 +37,8 @@ struct AttentionKernel {
 
   unsigned short headDimension;
 
+  bool isCausal;
+
   bool disableAsyncCopy;
 
   unsigned short threadgroupMemoryAllocation;
@@ -117,6 +119,7 @@ private:
   /// AttentionKernel+Softmax
   std::string computeD() const noexcept;
   std::string maskAttentionMatrixEdge() const noexcept;
+  std::string maskAttentionMatrixCausal() const noexcept;
   std::string onlineReduceMaximum() const noexcept;
   std::string onlineCorrectO() const noexcept;
   std::string onlineReduceSum() const noexcept;
