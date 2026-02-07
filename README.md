@@ -11,7 +11,7 @@ Drop-in acceleration for `F.scaled_dot_product_attention` on Apple Silicon MPS d
 ## Installation
 
 ```bash
-pip install metal-flash-sdpa
+pip install mps-flash-sdpa
 ```
 
 Or from source:
