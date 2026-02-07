@@ -4,13 +4,27 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mps-flash-sdpa"
-version = "0.1.0"
+version = "0.1.1"
 description = "Metal Flash Attention for PyTorch MPS devices"
 requires-python = ">=3.10"
 dependencies = ["torch>=2.1"]
 license = {text = "MIT"}
 readme = "README.md"
 authors = [{name = "Alli Price"}]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 
 [project.urls]
 Homepage = "https://github.com/alliprice/metal-flash-sdpa"
