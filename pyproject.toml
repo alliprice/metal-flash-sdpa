@@ -16,3 +16,9 @@ authors = [{name = "Alli Price"}]
 Homepage = "https://github.com/alliprice/metal-flash-sdpa"
 Repository = "https://github.com/alliprice/metal-flash-sdpa"
 Issues = "https://github.com/alliprice/metal-flash-sdpa/issues"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
