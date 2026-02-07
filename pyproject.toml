@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Metal Flash Attention for PyTorch MPS devices"
 requires-python = ">=3.10"
 dependencies = ["torch>=2.1"]
-license = "MIT"
+license = {text = "MIT"}
 readme = "README.md"
 authors = [{name = "Alli Price"}]
 
@@ -16,6 +16,3 @@ authors = [{name = "Alli Price"}]
 Homepage = "https://github.com/alliprice/metal-flash-sdpa"
 Repository = "https://github.com/alliprice/metal-flash-sdpa"
 Issues = "https://github.com/alliprice/metal-flash-sdpa/issues"
-
-[project.license-files]
-paths = ["LICENSE", "THIRD_PARTY_LICENSES"]
