@@ -54,8 +54,6 @@ class CustomBuildExtension(BuildExtension):
 
 
 setup(
-    name='metal-flash-sdpa',
-    version='0.1.0',
     ext_modules=[CppExtension(
         name='metal_flash_sdpa._C',
         sources=cpp_sources + mm_sources,

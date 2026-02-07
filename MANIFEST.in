@@ -1,0 +1,2 @@
+recursive-include csrc *.hpp *.h *.cpp *.mm *.inc *.metallib
+include LICENSE THIRD_PARTY_LICENSES README.md
