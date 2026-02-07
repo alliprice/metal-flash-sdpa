@@ -90,7 +90,7 @@ Falls back to PyTorch's built-in SDPA for:
 
 ## Benchmarks
 
-### Microbenchmarks (M3 Max 128GB)
+### Microbenchmarks (M3 Pro 36GB)
 
 | Operation | Seq Length | Speedup vs MPS SDPA |
 |-----------|-----------|---------------------|
