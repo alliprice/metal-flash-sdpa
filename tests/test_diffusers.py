@@ -93,6 +93,9 @@ def test_small_seq_fallback_in_diffusers():
 
 def test_mfa_call_counter():
     """MFA is called at least once during a forward+backward pass."""
+    import metal_flash_sdpa
+    import metal_flash_sdpa._C
+
     call_count = 0
     original_fwd = metal_flash_sdpa.mfa_attention_forward
 
@@ -102,7 +105,6 @@ def test_mfa_call_counter():
         return original_fwd(*args, **kwargs)
 
     metal_flash_sdpa.enable()
-    import metal_flash_sdpa._C
     orig = metal_flash_sdpa._C.mfa_attention_forward
     metal_flash_sdpa._C.mfa_attention_forward = counting_fwd
     metal_flash_sdpa.mfa_attention_forward = counting_fwd
