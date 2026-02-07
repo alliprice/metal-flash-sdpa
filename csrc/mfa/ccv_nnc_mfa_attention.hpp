@@ -1,3 +1,7 @@
+// Vendored from https://github.com/liuliu/ccv (unstable branch, lib/nnc/mfa/)
+// Copyright (c) 2010 Liu Liu. BSD 3-clause license — see THIRD_PARTY_LICENSES.
+// Local modifications: added is_causal field to params and hash structs
+
 #ifndef GUARD_ccv_nnc_mfa_attention_hpp
 #define GUARD_ccv_nnc_mfa_attention_hpp
 

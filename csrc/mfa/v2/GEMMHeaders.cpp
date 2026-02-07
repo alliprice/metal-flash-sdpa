@@ -1,3 +1,8 @@
+// Vendored from https://github.com/liuliu/ccv (unstable branch, lib/nnc/mfa/)
+// Originally from https://github.com/philipturner/metal-flash-attention (MIT license).
+// Copyright (c) 2010 Liu Liu (ccv). See THIRD_PARTY_LICENSES.
+// Local modifications: none
+
 #include "../ccv_nnc_mfa.hpp"
 
 #include <optional>
