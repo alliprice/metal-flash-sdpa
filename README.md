@@ -1,5 +1,9 @@
 # metal-flash-sdpa
 
+[![CI](https://github.com/alliprice/metal-flash-sdpa/actions/workflows/ci.yml/badge.svg)](https://github.com/alliprice/metal-flash-sdpa/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/mps-flash-sdpa)](https://pypi.org/project/mps-flash-sdpa/)
+[![Python](https://img.shields.io/pypi/pyversions/mps-flash-sdpa)](https://pypi.org/project/mps-flash-sdpa/)
+
 Drop-in acceleration for `F.scaled_dot_product_attention` on Apple Silicon MPS devices. Monkey-patches PyTorch's SDPA to dispatch eligible calls to Metal Flash Attention v2 kernels (from [ccv](https://github.com/liuliu/ccv/tree/unstable/lib/nnc/mfa)). Forward + backward pass — works for both inference and training.
 
 ## Requirements
