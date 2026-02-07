@@ -50,6 +50,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Create venv
+        run: python3 -m venv .venv
+
       - name: Build extension
         run: |
           source .venv/bin/activate
