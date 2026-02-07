@@ -1,5 +1,7 @@
 """Metal Flash Attention for PyTorch MPS — drop-in replacement for F.scaled_dot_product_attention."""
 
+__version__ = "0.1.0"
+
 import torch
 import torch.nn.functional as F
 from metal_flash_sdpa._C import mfa_attention_forward, mfa_attention_backward

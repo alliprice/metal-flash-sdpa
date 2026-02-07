@@ -3,7 +3,7 @@ requires = ["setuptools", "torch"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "metal-flash-sdpa"
+name = "mps-flash-sdpa"
 version = "0.1.0"
 description = "Metal Flash Attention for PyTorch MPS devices"
 requires-python = ">=3.10"
