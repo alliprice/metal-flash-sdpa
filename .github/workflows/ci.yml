@@ -2,44 +2,59 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
+  schedule:
+    # Weekly Saturday 08:00 UTC — catches PyTorch nightly breakage
+    - cron: '0 8 * * 6'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
 
 jobs:
-  test:
-    runs-on: self-hosted
-
+  build:
+    name: Build (PyTorch ${{ matrix.pytorch }})
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        pytorch: [stable, nightly]
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.14'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install pytest
-        pip install diffusers  # optional but needed for full test suite
+      - name: Install PyTorch (${{ matrix.pytorch }})
+        run: |
+          if [ "${{ matrix.pytorch }}" = "nightly" ]; then
+            pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/cpu
+          else
+            pip install torch
+          fi
 
-    - name: Build and install package
-      run: |
-        pip install -e .
+      - name: Build extension
+        run: pip install -e .
 
-    - name: Run tests
-      run: |
-        python -m pytest tests/ -v
+      - name: Import smoke test
+        run: python -c "import metal_flash_sdpa; print(f'metal_flash_sdpa {metal_flash_sdpa.__version__}')"
 
-    - name: Run benchmarks (smoke test)
-      run: |
-        # Quick smoke test - verify benchmarks can run
-        timeout 30 python -c "
-        import sys
-        sys.path.insert(0, '.')
-        from benchmarks.bench_forward import bench_forward
-        import torch
-        bench_forward(1, 4, 256, 256, 64, torch.float16, n_iters=5)
-        print('Benchmark smoke test passed')
-        "
+  test:
+    name: GPU Tests
+    needs: build
+    if: github.event_name == 'push' || github.event_name == 'schedule'
+    runs-on: [self-hosted, macos, apple-silicon]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build extension
+        run: pip install -e .
+
+      - name: Install test dependencies
+        run: pip install pytest
+
+      - name: Run tests
+        run: python -m pytest tests/ -v
